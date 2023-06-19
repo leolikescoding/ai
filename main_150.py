@@ -3,6 +3,16 @@ from config import config
 config["layers_size"] = [20, 8, 4, 150]
 print("config", config)
 
+
+
+from gen_data import get_batch
+import torch.nn as nn
+import torch
+from element import Element
+import random
+
+from torch.nn import functional as F
+
 class RouteElement(nn.Module):
     def __init__(self, element):
         super().__init__()

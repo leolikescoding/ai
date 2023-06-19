@@ -9,6 +9,13 @@ from config import config
 config["layers_size"] = [20, 8, 4, 250]
 print("config", config)
 
+from gen_data import get_batch
+import torch.nn as nn
+import torch
+from element import Element
+import random
+
+from torch.nn import functional as F
 
 class RouteElement(nn.Module):
     def __init__(self, element):
@@ -163,37 +170,71 @@ class LanModelManual(nn.Module):
 
 output_layer_filter = list(range(config["layers_size"][-1]))
 
+output_layer_score = {}
+for x in range(config["layers_size"][-1]):
+    output_layer_score[x] = {
+        "recent_score": [],
+        "recent_avg_score": 0,
+    }
+
+
+def update_output_layer_score(index, score):
+    output_layer_score[index]["recent_score"].append(score)
+    if len(output_layer_score[index]["recent_score"]) >= 4:
+        output_layer_score[index]["recent_score"].pop(0)
+
+    if len(output_layer_score[index]["recent_score"]) > 0:
+        avg_score = round(sum(output_layer_score[index]["recent_score"]) / len(
+            output_layer_score[index]["recent_score"]), 8)
+        output_layer_score[index]['recent_avg_score'] = avg_score
+
 
 def get_rand_output_index():
     return random.choice(output_layer_filter)
 
 
-@torch.no_grad()
-def estimate_loss_2():
-    out_mean = {}
-    model.eval()
-    out_losses = {}
-    for split in ['train', 'val']:
-        out_losses[split] = torch.zeros(
-            len(output_layer_filter), device=config["device"])
-        for out_idx, out_id in enumerate(output_layer_filter):
-            losses = torch.zeros(config["eval_iters"], device=config["device"])
-            for k in range(config["eval_iters"]):
-                X, Y = get_batch(split)
-                logits, loss = model(out_id, X, Y)
-                losses[k] = loss.item()
-            out_losses[split][out_idx] = losses.mean()
-        out_mean[split] = out_losses[split].mean()
+def remove_potentials():
 
-        if split == 'val':
-            val_losses = out_losses[split].tolist()
-            max_index = val_losses.index(max(val_losses))
-            to_remove_val = output_layer_filter[max_index]
-            output_layer_filter.remove(to_remove_val)
-            print("output_layer_filter", output_layer_filter)
+    if len(output_layer_filter) <= 1:
+        return
 
-    model.train()
-    return out_mean
+    max_score_index = -1
+    max_score = 0
+    for score_index, score_item in output_layer_score.items():
+        if score_item['recent_avg_score'] > max_score:
+            max_score = score_item['recent_avg_score']
+            max_score_index = score_index
+
+    if max_score_index != -1:
+        output_layer_score.pop(max_score_index)
+        output_layer_filter.remove(max_score_index)
+
+
+# @torch.no_grad()
+# def estimate_loss_2():
+#     out_mean = {}
+#     model.eval()
+#     out_losses = {}
+#     for split in ['train', 'val']:
+#         out_losses[split] = torch.zeros(len(output_layer_filter))
+#         for out_idx, out_id in enumerate(output_layer_filter):
+#             losses = torch.zeros(config["eval_iters"])
+#             for k in range(config["eval_iters"]):
+#                 X, Y = get_batch(split)
+#                 logits, loss = model(out_id, X, Y)
+#                 losses[k] = loss.item()
+#             out_losses[split][out_idx] = losses.mean()
+#         out_mean[split] = out_losses[split].mean()
+
+#         if split == 'val':
+#             val_losses = out_losses[split].tolist()
+#             max_index = val_losses.index(max(val_losses))
+#             to_remove_val = output_layer_filter[max_index]
+#             output_layer_filter.remove(to_remove_val)
+#             print("output_layer_filter", output_layer_filter)
+
+#     model.train()
+#     return out_mean
 
 
 @torch.no_grad()
@@ -201,7 +242,7 @@ def estimate_loss():
     out = {}
     model.eval()
     for split in ['train', 'val']:
-        losses = torch.zeros(config["eval_iters"], device=config["device"])
+        losses = torch.zeros(config["eval_iters"])
         for k in range(config["eval_iters"]):
             X, Y = get_batch(split)
             logits, loss = model(get_rand_output_index(), X, Y)
@@ -220,30 +261,31 @@ print(sum(p.numel() for p in m.parameters())/1e6, 'M parameters')
 # create a PyTorch optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=config["learning_rate"])
 
-counter = 0
+# counter = 0
 for iter in range(config["max_iters"]):
 
     # every once in a while evaluate the loss on train and val sets
     if iter % config["eval_interval"] == 0 or iter == config["max_iters"] - 1:
-        counter = counter+1
-        if counter == 10:
-            counter = 0
-            if len(output_layer_filter) > 1:
-                print("estimate_loss_2")
-                losses = estimate_loss_2()
-            else:
-                losses = estimate_loss()
-        else:
-            losses = estimate_loss()
-
+        # counter = counter+1
+        # if counter % 1000000 == 0:
+        #     remove_potentials()
+        losses = estimate_loss()
         print(
             f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        remove_potentials()
+        continue
 
     # sample a batch of data
     xb, yb = get_batch('train')
 
     # evaluate the loss
-    logits, loss = model(get_rand_output_index(), xb, yb)
+    output_index = get_rand_output_index()
+    logits, loss = model(output_index, xb, yb)
+
+    loss_val = loss.item()
+    # print("output_index:", output_index, "loss_val:", loss_val)
+    update_output_layer_score(output_index, loss_val)
+
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()

@@ -33,5 +33,4 @@ def get_batch(train_or_eval):
         data) - config["sentence_len"], (config["batch_size"],), device=config["device"])
     x = torch.stack([data[i:i+config["sentence_len"]] for i in ix])
     y = torch.stack([data[i+1:i+config["sentence_len"]+1] for i in ix])
-    # x, y = x.to(device), y.to(device)
     return x, y

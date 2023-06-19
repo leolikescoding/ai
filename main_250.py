@@ -1,13 +1,12 @@
-
-from gen_data import get_batch
-import torch.nn as nn
-import torch
-from element import Element
-from config import config
-import random
-
 from torch.nn import functional as F
+import random
+from element import Element
+import torch
+import torch.nn as nn
+from gen_data import get_batch
+from config import config
 
+config["layers_size"] = [20, 8, 4, 250]
 print("config", config)
 
 
@@ -82,9 +81,9 @@ class LanModelManual(nn.Module):
 
                     re = RouteElement(Element(config["output_size"], random.randint(
                         1, layers_antenna_max_size[idx]), config["output_size"],  config["sentence_len"]))
-                    
+
                     re.to(config["device"])
-                    
+
                     for ls in layers_size:
                         re.potential.append(list(range(ls)))
                     self.param_elements.append(re)
@@ -175,9 +174,10 @@ def estimate_loss_2():
     model.eval()
     out_losses = {}
     for split in ['train', 'val']:
-        out_losses[split] = torch.zeros(len(output_layer_filter))
+        out_losses[split] = torch.zeros(
+            len(output_layer_filter), device=config["device"])
         for out_idx, out_id in enumerate(output_layer_filter):
-            losses = torch.zeros(config["eval_iters"])
+            losses = torch.zeros(config["eval_iters"], device=config["device"])
             for k in range(config["eval_iters"]):
                 X, Y = get_batch(split)
                 logits, loss = model(out_id, X, Y)
@@ -201,7 +201,7 @@ def estimate_loss():
     out = {}
     model.eval()
     for split in ['train', 'val']:
-        losses = torch.zeros(config["eval_iters"])
+        losses = torch.zeros(config["eval_iters"], device=config["device"])
         for k in range(config["eval_iters"]):
             X, Y = get_batch(split)
             logits, loss = model(get_rand_output_index(), X, Y)
